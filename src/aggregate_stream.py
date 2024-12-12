@@ -19,6 +19,9 @@ class PrintWatermarkProcessFunction(ProcessFunction):
         logger.info(f"Processing Element: {value}")
         logger.info(f"Current Watermark: {ctx.timer_service().current_watermark()}")
 
+class RowToStringMapFunction(MapFunction):
+    def map(self, value):
+        return str(value)
 
 def read_kafka_source(stream_env: StreamExecutionEnvironment) -> DataStream:
     """Reads the User Login Kafka Stream, Deserializes it with specified schema, and returns it as a Datastream
@@ -44,7 +47,7 @@ def read_kafka_source(stream_env: StreamExecutionEnvironment) -> DataStream:
             .build()
     )   
 
-    watermark_strategy = WatermarkStrategy.for_bounded_out_of_orderness(Duration.of_seconds(30))
+    watermark_strategy = WatermarkStrategy.for_bounded_out_of_orderness(Duration.of_seconds(20)).with_idleness(Duration.of_minutes(1))
 
     return stream_env.from_source(kafka_source, watermark_strategy, "User Login Kafka Source").uid("read-user-login-kafka-stream")
 
@@ -66,19 +69,25 @@ def generate_table(table_env: StreamTableEnvironment, data_stream: DataStream) -
                 .column("locale", DataTypes.STRING())
                 .column("device_id", DataTypes.STRING())
                 .column("timestamp", DataTypes.STRING())
-                .column_by_expression("event_time", to_timestamp_ltz(col("timestamp").cast(DataTypes.BIGINT()), 3))
-                .watermark("event_time", "event_time - INTERVAL '5' SECOND")
+                .column_by_expression("ts", to_timestamp_ltz(col("timestamp").cast(DataTypes.BIGINT()), 0))
+                .watermark("ts", "ts - INTERVAL '5' SECOND")
                 .build()
             )
     return table_env.from_data_stream(data_stream, schema)
 
     
 def aggregate_stream(table: Table) -> Table:
-    table = table.window(Tumble.over(lit(5).seconds).on(col("event_time")).alias("w"))
-    table = table.group_by(col('device_type'), col('locale'), col('w')) \
+    # Coalesece None Device Types to Unknown
+    table = table.select(
+        col('user_id'),
+        col('device_type').if_null('Unknown').alias('device_type'),
+        col('ts')
+    )
+
+    table = table.window(Tumble.over(lit(1).minute).on(col("ts")).alias("w"))
+    table = table.group_by(col('device_type'), col('w')) \
         .select(
             col('device_type'), 
-            col('locale'), 
             col('w').start.alias('window_start'), 
             col('w').end.alias('window_end'), 
             col('user_id').count.alias('user_count')
@@ -86,37 +95,33 @@ def aggregate_stream(table: Table) -> Table:
     
     return table
 
-class RowToStringMapFunction(MapFunction):
-    def map(self, value):
-        return str(value)
-
 def run(stream_env: StreamExecutionEnvironment, t_env: StreamTableEnvironment):
     ds = read_kafka_source(stream_env)
     table = generate_table(t_env, ds)
     # table.print_schema()
-    # table = aggregate_stream(table)
+    table = aggregate_stream(table)
     table.print_schema()
 
     ds = t_env.to_data_stream(table)
 
-    # ds.print()
-    ds.process(PrintWatermarkProcessFunction())
+    ds.print()
+    # ds.process(PrintWatermarkProcessFunction())
 
-    # Convert the Row to a String so it can be sent to Kafka
-    ds = ds.map(RowToStringMapFunction(), Types.STRING())
+    # # Convert the Row to a String so it can be sent to Kafka
+    # ds = ds.map(RowToStringMapFunction(), Types.STRING())
 
-    sink = KafkaSink.builder() \
-        .set_bootstrap_servers(CONFIG.KAFKA_BOOTSTRAP_SERVERS) \
-        .set_record_serializer(
-            KafkaRecordSerializationSchema.builder()
-                .set_topic(CONFIG.WRITE_KAFKA_TOPIC)
-                .set_value_serialization_schema(SimpleStringSchema())
-                .build()
-        ) \
-        .set_delivery_guarantee(DeliveryGuarantee.AT_LEAST_ONCE) \
-        .build()
+    # sink = KafkaSink.builder() \
+    #     .set_bootstrap_servers(CONFIG.KAFKA_BOOTSTRAP_SERVERS) \
+    #     .set_record_serializer(
+    #         KafkaRecordSerializationSchema.builder()
+    #             .set_topic(CONFIG.WRITE_KAFKA_TOPIC)
+    #             .set_value_serialization_schema(SimpleStringSchema())
+    #             .build()
+    #     ) \
+    #     .set_delivery_guarantee(DeliveryGuarantee.AT_LEAST_ONCE) \
+    #     .build()
     
-    ds.sink_to(sink).name("Aggregate Kafka Sink")
+    # ds.sink_to(sink).name("Aggregate Kafka Sink")
 
     stream_env.execute("Aggregate Fetch Example Stream")
 
