@@ -17,6 +17,7 @@ class CONFIG:
         KAFKA_BOOTSTRAP_SERVERS = 'kafka:9092'
         KAFKA_TOPIC = 'user-login'
         KAFKA_GROUP_ID = 'flink-kafka-fetch-example-local'
+        WRITE_KAFKA_TOPIC = 'user-login-aggregated-local'
     else:
         message = "Invalid Environment Passed"
         logger.error(message)

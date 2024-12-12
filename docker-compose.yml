@@ -38,6 +38,16 @@ services:
       KAFKA_TOPIC: user-login
     networks:
       - kafka-network
+  kafka-topic-generator:
+    image: fetch-example-flink-transform:latest
+    depends_on:
+      - kafka
+    restart: on-failure:10
+    volumes:
+      - ./src:/opt/flink/usrlib
+    command: ["python", "/opt/flink/usrlib/generate_kafka_topic.py"]
+    networks:
+      - kafka-network
   flink-jobmanager:
     image: fetch-example-flink-transform:latest
     command: standalone-job --python /opt/flink/usrlib/aggregate_stream.py
@@ -45,6 +55,7 @@ services:
       - ./src:/opt/flink/usrlib
     depends_on:
       - my-python-producer
+      - kafka-topic-generator
     restart: on-failure:10
     ports:
       - 8081:8081
@@ -66,6 +77,7 @@ services:
       - ./src:/opt/flink/usrlib
     depends_on:
       - flink-jobmanager
+      - kafka-topic-generator
     environment:
       - |
         FLINK_PROPERTIES=
