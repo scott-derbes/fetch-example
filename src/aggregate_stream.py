@@ -88,6 +88,11 @@ def aggregate_stream(table: Table) -> Table:
     """Aggregates the Stream by Device Type and Window. This will count the number of users for each device type in a 1 minute window
     Very simple aggregation that generates a count of users based on device_type and locale, but shows how Table API can be used for realtime analytics
 
+    Other examples of aggregations could be:
+        1. Aggregate App Version and Device Type to see which versions are most popular on each device and watch upgrade trends
+        2. Aggregate IP and Device Type to see if there are any IP addresses that are associated with multiple devices
+        3. Aggregate Locale and Device Type to see if there are any locales that are more popular on certain devices
+
     Args:
         table (Table): Unaggregated Table
 
